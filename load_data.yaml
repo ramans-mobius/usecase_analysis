@@ -69,9 +69,9 @@ implementation:
         with open(args.access_token, 'r') as f:
             access_token = f.read().strip()
 
-        print(f"🔧 Using domains:")
-        print(f"   IAM Domain: {args.iam_domain}")
-        print(f"   API Domain: {args.api_domain}")
+        print(f"Using domains:")
+        print(f"  IAM Domain: {args.iam_domain}")
+        print(f"  API Domain: {args.api_domain}")
 
         # Parse schema IDs
         try:
@@ -104,12 +104,11 @@ implementation:
         }
 
         def fetch_schema_data(schema_name: str, schema_id: str) -> dict:
-            """Fetch data from a specific schema with SSL verification disabled"""
-            print(f" Fetching {schema_name}...")
-            print(f"   Schema ID: {schema_id}")
+            print(f"\nFetching {schema_name}...")
+            print(f"  Schema ID: {schema_id}")
             
             url = f"{args.api_domain}/pi-entity-instances-service/v2.0/schemas/{schema_id}/instances/list?page=0&size={args.page_size}&showDBaaSReservedKeywords=true"
-            print(f"   URL: {url}")
+            print(f"  URL: {url}")
             
             try:
                 # ADD verify=False to disable SSL verification
@@ -121,13 +120,13 @@ implementation:
                     verify=False  # ← CRITICAL FIX: Disable SSL verification
                 )
                 
-                print(f"   Status: {response.status_code}")
+                print(f"  Status: {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
                     
                     if isinstance(data, list):
-                        print(f"    Success: {len(data)} records")
+                        print(f"   Success: {len(data)} records")
                         
                         df = pd.DataFrame(data)
                         
@@ -148,7 +147,7 @@ implementation:
                             "analysis": analysis
                         }
                     else:
-                        print(f"    Unexpected data format: {type(data)}")
+                        print(f"   Unexpected data format: {type(data)}")
                         return {
                             "data": data,
                             "df": None,
@@ -162,8 +161,8 @@ implementation:
                         }
                         
                 else:
-                    print(f"    Failed: {response.status_code}")
-                    print(f"   Error: {response.text[:200]}")
+                    print(f"   Failed: {response.status_code}")
+                    print(f"  Error: {response.text[:200]}")
                     
                     return {
                         "data": None,
@@ -179,7 +178,7 @@ implementation:
                     }
                     
             except Exception as e:
-                print(f"    Exception: {e}")
+                print(f"   Exception: {e}")
                 return {
                     "data": None,
                     "df": None,
@@ -215,12 +214,12 @@ implementation:
                 os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                 with open(output_path, 'wb') as f:
                     pickle.dump(result["data"], f)
-                print(f"    Saved to: {output_path}")
+                print(f"  💾 Saved to: {output_path}")
             else:
                 os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                 with open(output_path, 'wb') as f:
                     pickle.dump([], f)
-                print(f"    Created empty file: {output_path}")
+                print(f"  Created empty file: {output_path}")
 
         # Save metadata
         os.makedirs(os.path.dirname(args.schema_metadata) or ".", exist_ok=True)
@@ -235,12 +234,12 @@ implementation:
                      if result["analysis"]["status"] == "success"]
         
         print(f" FETCH SUMMARY:")
-        print(f"   Successful: {len(successful)}/{len(schema_mapping)}")
-        print(f"   Failed: {len(schema_mapping) - len(successful)}")
+        print(f"  Successful: {len(successful)}/{len(schema_mapping)}")
+        print(f"  Failed: {len(schema_mapping) - len(successful)}")
         
         for name in successful:
             records = all_results[name]["analysis"]["records"]
-            print(f"   • {name}: {records:,} records")
+            print(f"  • {name}: {records:,} records")
             
     args:
       - --access_token
