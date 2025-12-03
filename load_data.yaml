@@ -1,4 +1,4 @@
-name: 2 Load PESTLE Datasets (Fixed Domains)
+name: 3 Load PESTLE Datasets (Fixed Domains)
 description: Fetches PESTLE datasets using correct domains for each service
 
 inputs:
@@ -104,7 +104,7 @@ implementation:
         }
 
         def fetch_schema_data(schema_name, schema_id):
-            print("\nFetching " + schema_name + "...")
+            print("  Fetching " + schema_name + "...")
             print("  Schema ID: " + schema_id)
             
             url = args.api_domain + "/pi-entity-instances-service/v2.0/schemas/" + schema_id + "/instances/list?page=0&size=" + str(args.page_size) + "&showDBaaSReservedKeywords=true"
