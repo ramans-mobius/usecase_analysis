@@ -1,21 +1,22 @@
-name: Load PESTLE Datasets
-description: Fetches PESTLE-related datasets from multiple schemas using the access token.
+name: Load PESTLE Datasets (Fixed Domains)
+description: Fetches PESTLE datasets using correct domains for each service
 
 inputs:
   - {name: access_token, type: string, description: "Bearer access token from IAM login"}
-  - {name: domain, type: string, description: "Base domain URL"}
+  - {name: iam_domain, type: string, description: "Domain for IAM service (e.g., https://igs.gov-cloud.ai)"}
+  - {name: api_domain, type: string, description: "Domain for data API (e.g., https://ig.aidtaas.com)"}
   - {name: schema_ids, type: String, description: "JSON string with schema IDs mapping"}
   - {name: page_size, type: Integer, default: "10000", description: "Number of records per page"}
 
 outputs:
-  - {name: worldbank_data, type: Dataset, description: "World Bank dataset"}
-  - {name: imf_data, type: Dataset, description: "IMF dataset"}
-  - {name: oecd_data, type: Dataset, description: "OECD dataset"}
-  - {name: comtrade_data, type: Dataset, description: "Comtrade dataset"}
-  - {name: patents_data, type: Dataset, description: "Patents dataset"}
-  - {name: country_industry_data, type: Dataset, description: "Country Industry Matrix dataset"}
-  - {name: pestle_scores_data, type: Dataset, description: "PESTLE Scores dataset"}
-  - {name: schema_metadata, type: String, description: "Metadata about fetched schemas"}
+  - {name: worldbank_data, type: Dataset}
+  - {name: imf_data, type: Dataset}
+  - {name: oecd_data, type: Dataset}
+  - {name: comtrade_data, type: Dataset}
+  - {name: patents_data, type: Dataset}
+  - {name: country_industry_data, type: Dataset}
+  - {name: pestle_scores_data, type: Dataset}
+  - {name: schema_metadata, type: String}
 
 implementation:
   container:
@@ -24,7 +25,7 @@ implementation:
       - sh
       - -ec
       - |
-        apt-get update > /dev/null && apt-get install -y curl > /dev/null
+        apt-get update > /dev/null && apt-get install -y curl ca-certificates > /dev/null
         pip3 install --quiet requests pandas || pip3 install --quiet requests pandas --user
         exec "$0" "$@"
       - python3
@@ -37,17 +38,22 @@ implementation:
         import pickle
         import requests
         import pandas as pd
-        from typing import Dict, List, Any
-        import time
+        import urllib3
+        import warnings
         from datetime import datetime
-
+        
+        # Disable SSL warnings for testing
+        warnings.filterwarnings('ignore')
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+        
         parser = argparse.ArgumentParser(description="Load PESTLE Datasets")
         parser.add_argument('--access_token', type=str, required=True)
-        parser.add_argument('--domain', type=str, required=True)
+        parser.add_argument('--iam_domain', type=str, required=True)
+        parser.add_argument('--api_domain', type=str, required=True)
         parser.add_argument('--schema_ids', type=str, required=True)
         parser.add_argument('--page_size', type=int, default=10000)
         
-        # Output paths for each dataset
+        # Output paths
         parser.add_argument('--worldbank_data', type=str, required=True)
         parser.add_argument('--imf_data', type=str, required=True)
         parser.add_argument('--oecd_data', type=str, required=True)
@@ -63,11 +69,14 @@ implementation:
         with open(args.access_token, 'r') as f:
             access_token = f.read().strip()
 
+        print(f"🔧 Using domains:")
+        print(f"   IAM Domain: {args.iam_domain}")
+        print(f"   API Domain: {args.api_domain}")
+
         # Parse schema IDs
         try:
             schema_mapping = json.loads(args.schema_ids)
         except:
-            # Default schema IDs (you can customize these)
             schema_mapping = {
                 "worldbank": "68c16c9033b961627a6b7cea",
                 "imf": "68c484885fafa83bbffefd22",
@@ -94,25 +103,34 @@ implementation:
             "endTime": 0
         }
 
-        def fetch_schema_data(schema_name: str, schema_id: str) -> Dict[str, Any]:
-           
+        def fetch_schema_data(schema_name: str, schema_id: str) -> dict:
+            """Fetch data from a specific schema with SSL verification disabled"""
             print(f" Fetching {schema_name}...")
+            print(f"   Schema ID: {schema_id}")
             
-            url = f"{args.domain}/pi-entity-instances-service/v2.0/schemas/{schema_id}/instances/list?page=0&size={args.page_size}&showDBaaSReservedKeywords=true"
+            url = f"{args.api_domain}/pi-entity-instances-service/v2.0/schemas/{schema_id}/instances/list?page=0&size={args.page_size}&showDBaaSReservedKeywords=true"
+            print(f"   URL: {url}")
             
             try:
-                response = requests.post(url, headers=headers, json=payload, timeout=120)
+                # ADD verify=False to disable SSL verification
+                response = requests.post(
+                    url, 
+                    headers=headers, 
+                    json=payload, 
+                    timeout=120,
+                    verify=False  # ← CRITICAL FIX: Disable SSL verification
+                )
+                
+                print(f"   Status: {response.status_code}")
                 
                 if response.status_code == 200:
                     data = response.json()
                     
                     if isinstance(data, list):
-                        print(f"   Success: {len(data)} records")
+                        print(f"    Success: {len(data)} records")
                         
-                        # Convert to DataFrame for analysis
                         df = pd.DataFrame(data)
                         
-                        # Basic analysis
                         analysis = {
                             "schema_name": schema_name,
                             "schema_id": schema_id,
@@ -130,7 +148,7 @@ implementation:
                             "analysis": analysis
                         }
                     else:
-                        print(f"   Unexpected data format: {type(data)}")
+                        print(f"    Unexpected data format: {type(data)}")
                         return {
                             "data": data,
                             "df": None,
@@ -144,7 +162,7 @@ implementation:
                         }
                         
                 else:
-                    print(f"   Failed: {response.status_code}")
+                    print(f"    Failed: {response.status_code}")
                     print(f"   Error: {response.text[:200]}")
                     
                     return {
@@ -161,7 +179,7 @@ implementation:
                     }
                     
             except Exception as e:
-                print(f"   Exception: {e}")
+                print(f"    Exception: {e}")
                 return {
                     "data": None,
                     "df": None,
@@ -178,7 +196,8 @@ implementation:
         all_results = {}
         metadata = {
             "fetch_timestamp": datetime.now().isoformat(),
-            "domain": args.domain,
+            "iam_domain": args.iam_domain,
+            "api_domain": args.api_domain,
             "page_size": args.page_size,
             "schemas": {}
         }
@@ -193,24 +212,22 @@ implementation:
             output_path = getattr(args, output_var_name)
             
             if result["data"] is not None:
-                # Save as pickle
                 os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                 with open(output_path, 'wb') as f:
                     pickle.dump(result["data"], f)
-                print(f"   Saved to: {output_path}")
+                print(f"    Saved to: {output_path}")
             else:
-                # Create empty file if no data
                 os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                 with open(output_path, 'wb') as f:
                     pickle.dump([], f)
-                print(f"   Created empty file: {output_path}")
+                print(f"    Created empty file: {output_path}")
 
         # Save metadata
         os.makedirs(os.path.dirname(args.schema_metadata) or ".", exist_ok=True)
         with open(args.schema_metadata, 'w') as f:
             json.dump(metadata, f, indent=2)
 
-        print(f" All datasets fetched and saved")
+        print(f" All datasets processed")
         print(f" Metadata saved to: {args.schema_metadata}")
 
         # Print summary
@@ -228,8 +245,10 @@ implementation:
     args:
       - --access_token
       - {inputPath: access_token}
-      - --domain
-      - {inputValue: domain}
+      - --iam_domain
+      - {inputValue: iam_domain}
+      - --api_domain
+      - {inputValue: api_domain}
       - --schema_ids
       - {inputValue: schema_ids}
       - --page_size
