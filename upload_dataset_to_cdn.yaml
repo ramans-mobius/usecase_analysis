@@ -1,0 +1,281 @@
+name: Upload PESTLE Data to CDN
+description: Uploads multiple PESTLE datasets to CDN and outputs their URLs.
+
+inputs:
+  - {name: worldbank_data, type: Dataset, description: "World Bank dataset"}
+  - {name: imf_data, type: Dataset, description: "IMF dataset"}
+  - {name: oecd_data, type: Dataset, description: "OECD dataset"}
+  - {name: comtrade_data, type: Dataset, description: "Comtrade dataset"}
+  - {name: patents_data, type: Dataset, description: "Patents dataset"}
+  - {name: country_industry_data, type: Dataset, description: "Country Industry Matrix dataset"}
+  - {name: pestle_scores_data, type: Dataset, description: "PESTLE Scores dataset"}
+  - {name: schema_metadata, type: String, description: "Schema metadata"}
+  - {name: bearer_token, type: string, description: "Bearer token for CDN authentication"}
+  - {name: domain, type: String, description: "API domain (e.g., https://igs.gov-cloud.ai)"}
+  - {name: get_cdn, type: String, description: "CDN domain (e.g., https://cdn-new.gov-cloud.ai)"}
+
+outputs:
+  - {name: worldbank_cdn_url, type: String, description: "CDN URL for World Bank data"}
+  - {name: imf_cdn_url, type: String, description: "CDN URL for IMF data"}
+  - {name: oecd_cdn_url, type: String, description: "CDN URL for OECD data"}
+  - {name: comtrade_cdn_url, type: String, description: "CDN URL for Comtrade data"}
+  - {name: patents_cdn_url, type: String, description: "CDN URL for Patents data"}
+  - {name: country_industry_cdn_url, type: String, description: "CDN URL for Country Industry data"}
+  - {name: pestle_scores_cdn_url, type: String, description: "CDN URL for PESTLE Scores"}
+  - {name: metadata_cdn_url, type: String, description: "CDN URL for schema metadata"}
+  - {name: cdn_urls_json, type: String, description: "JSON with all CDN URLs"}
+
+implementation:
+  container:
+    image: python:3.8-slim
+    command:
+      - sh
+      - -ec
+      - |
+        # Install required tools
+        apt-get update > /dev/null && apt-get install -y curl jq > /dev/null
+        pip3 install --quiet requests pandas || pip3 install --quiet requests pandas --user
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import subprocess
+        import json
+        import os
+        import uuid
+        import pickle
+        import pandas as pd
+        from datetime import datetime
+        import tempfile
+
+        parser = argparse.ArgumentParser(description="Upload PESTLE datasets to CDN")
+        
+        # Input paths
+        parser.add_argument('--worldbank_data', type=str, required=True)
+        parser.add_argument('--imf_data', type=str, required=True)
+        parser.add_argument('--oecd_data', type=str, required=True)
+        parser.add_argument('--comtrade_data', type=str, required=True)
+        parser.add_argument('--patents_data', type=str, required=True)
+        parser.add_argument('--country_industry_data', type=str, required=True)
+        parser.add_argument('--pestle_scores_data', type=str, required=True)
+        parser.add_argument('--schema_metadata', type=str, required=True)
+        parser.add_argument('--bearer_token', type=str, required=True)
+        parser.add_argument('--domain', type=str, required=True)
+        parser.add_argument('--get_cdn', type=str, required=True)
+        
+        # Output paths
+        parser.add_argument('--worldbank_cdn_url', type=str, required=True)
+        parser.add_argument('--imf_cdn_url', type=str, required=True)
+        parser.add_argument('--oecd_cdn_url', type=str, required=True)
+        parser.add_argument('--comtrade_cdn_url', type=str, required=True)
+        parser.add_argument('--patents_cdn_url', type=str, required=True)
+        parser.add_argument('--country_industry_cdn_url', type=str, required=True)
+        parser.add_argument('--pestle_scores_cdn_url', type=str, required=True)
+        parser.add_argument('--metadata_cdn_url', type=str, required=True)
+        parser.add_argument('--cdn_urls_json', type=str, required=True)
+        
+        args = parser.parse_args()
+
+        # Read bearer token
+        with open(args.bearer_token, 'r') as f:
+            bearer_token = f.read().strip()
+
+        # CDN upload URL
+        upload_url = f"{args.domain}/mobius-content-service/v1.0/content/upload?filePathAccess=private&filePath=%2Fpestle%2Fdatasets%2F"
+
+        def upload_file_to_cdn(file_path: str, filename: str) -> str:
+          
+            print(f" Uploading {filename}...")
+            
+            curl_command = [
+                "curl",
+                "--location", upload_url,
+                "--header", f"Authorization: Bearer {bearer_token}",
+                "--form", f"file=@{file_path}",
+                "--fail",
+                "--show-error",
+                "--silent"
+            ]
+            
+            try:
+                process = subprocess.run(
+                    curl_command,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                
+                response_json = json.loads(process.stdout)
+                relative_cdn_url = response_json.get("cdnUrl", "")
+                
+                if not relative_cdn_url:
+                    raise ValueError(f"No CDN URL in response for {filename}")
+                
+                full_url = f"{args.get_cdn}{relative_cdn_url}"
+                print(f"    Uploaded: {full_url}")
+                return full_url
+                
+            except subprocess.CalledProcessError as e:
+                print(f"    Curl failed for {filename}:")
+                print(f"      Error: {e.stderr}")
+                raise
+            except json.JSONDecodeError as e:
+                print(f"    JSON decode error for {filename}: {e}")
+                raise
+            except Exception as e:
+                print(f"    Upload failed for {filename}: {e}")
+                raise
+
+        def save_and_upload_dataset(input_path: str, dataset_name: str) -> str:
+         
+            try:
+                # Read the pickle file
+                with open(input_path, 'rb') as f:
+                    data = pickle.load(f)
+                
+                # Create a temporary file
+                with tempfile.NamedTemporaryFile(mode='wb', suffix='.pkl', delete=False) as tmp:
+                    pickle.dump(data, tmp)
+                    temp_path = tmp.name
+                
+                # Upload to CDN
+                filename = f"pestle_{dataset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pkl"
+                cdn_url = upload_file_to_cdn(temp_path, filename)
+                
+                # Clean up
+                os.unlink(temp_path)
+                
+                return cdn_url
+                
+            except Exception as e:
+                print(f"    Failed to process {dataset_name}: {e}")
+                return ""
+
+        def upload_json_file(data: dict, dataset_name: str) -> str:
+           
+            try:
+                # Create temporary JSON file
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as tmp:
+                    json.dump(data, tmp, indent=2)
+                    temp_path = tmp.name
+                
+                # Upload to CDN
+                filename = f"pestle_{dataset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                cdn_url = upload_file_to_cdn(temp_path, filename)
+                
+                # Clean up
+                os.unlink(temp_path)
+                
+                return cdn_url
+                
+            except Exception as e:
+                print(f"   Failed to upload JSON {dataset_name}: {e}")
+                return ""
+
+        print("=" * 60)
+        print("UPLOADING PESTLE DATASETS TO CDN")
+        print("=" * 60)
+
+        # Upload all datasets
+        cdn_urls = {}
+        
+        datasets = [
+            ("worldbank", args.worldbank_data),
+            ("imf", args.imf_data),
+            ("oecd", args.oecd_data),
+            ("comtrade", args.comtrade_data),
+            ("patents", args.patents_data),
+            ("country_industry", args.country_industry_data),
+            ("pestle_scores", args.pestle_scores_data)
+        ]
+        
+        for dataset_name, input_path in datasets:
+            cdn_url = save_and_upload_dataset(input_path, dataset_name)
+            cdn_urls[f"{dataset_name}_url"] = cdn_url
+            
+            # Save to output file
+            output_var = f"{dataset_name}_cdn_url"
+            output_path = getattr(args, output_var)
+            
+            os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+            with open(output_path, 'w') as f:
+                f.write(cdn_url if cdn_url else "")
+
+        # Upload metadata
+        print(f" Uploading metadata...")
+        with open(args.schema_metadata, 'r') as f:
+            metadata = json.load(f)
+        
+        metadata_cdn_url = upload_json_file(metadata, "metadata")
+        cdn_urls["metadata_url"] = metadata_cdn_url
+        
+        os.makedirs(os.path.dirname(args.metadata_cdn_url) or ".", exist_ok=True)
+        with open(args.metadata_cdn_url, 'w') as f:
+            f.write(metadata_cdn_url if metadata_cdn_url else "")
+
+        # Save all URLs as JSON
+        cdn_urls["timestamp"] = datetime.now().isoformat()
+        cdn_urls["domain"] = args.domain
+        cdn_urls["get_cdn"] = args.get_cdn
+        
+        os.makedirs(os.path.dirname(args.cdn_urls_json) or ".", exist_ok=True)
+        with open(args.cdn_urls_json, 'w') as f:
+            json.dump(cdn_urls, f, indent=2)
+        
+        print(f" All CDN URLs saved to: {args.cdn_urls_json}")
+        
+        # Print summary
+        print(f" UPLOAD SUMMARY:")
+        successful = sum(1 for url in cdn_urls.values() if url and url != "")
+        total = len(datasets) + 1  # +1 for metadata
+        
+        print(f"   Successful uploads: {successful}/{total}")
+        
+        for key, url in cdn_urls.items():
+            if key not in ["timestamp", "domain", "get_cdn"]:
+                status = "worked!" if url and url != "" else "x"
+                print(f"   {status} {key}: {url[:80] if url else 'Failed'}")
+
+    args:
+      - --worldbank_data
+      - {inputPath: worldbank_data}
+      - --imf_data
+      - {inputPath: imf_data}
+      - --oecd_data
+      - {inputPath: oecd_data}
+      - --comtrade_data
+      - {inputPath: comtrade_data}
+      - --patents_data
+      - {inputPath: patents_data}
+      - --country_industry_data
+      - {inputPath: country_industry_data}
+      - --pestle_scores_data
+      - {inputPath: pestle_scores_data}
+      - --schema_metadata
+      - {inputPath: schema_metadata}
+      - --bearer_token
+      - {inputPath: bearer_token}
+      - --domain
+      - {inputValue: domain}
+      - --get_cdn
+      - {inputValue: get_cdn}
+      - --worldbank_cdn_url
+      - {outputPath: worldbank_cdn_url}
+      - --imf_cdn_url
+      - {outputPath: imf_cdn_url}
+      - --oecd_cdn_url
+      - {outputPath: oecd_cdn_url}
+      - --comtrade_cdn_url
+      - {outputPath: comtrade_cdn_url}
+      - --patents_cdn_url
+      - {outputPath: patents_cdn_url}
+      - --country_industry_cdn_url
+      - {outputPath: country_industry_cdn_url}
+      - --pestle_scores_cdn_url
+      - {outputPath: pestle_scores_cdn_url}
+      - --metadata_cdn_url
+      - {outputPath: metadata_cdn_url}
+      - --cdn_urls_json
+      - {outputPath: cdn_urls_json}
