@@ -1,0 +1,252 @@
+name: Load PESTLE Datasets
+description: Fetches PESTLE-related datasets from multiple schemas using the access token.
+
+inputs:
+  - {name: access_token, type: string, description: "Bearer access token from IAM login"}
+  - {name: domain, type: string, description: "Base domain URL"}
+  - {name: schema_ids, type: String, description: "JSON string with schema IDs mapping"}
+  - {name: page_size, type: Integer, default: "10000", description: "Number of records per page"}
+
+outputs:
+  - {name: worldbank_data, type: Dataset, description: "World Bank dataset"}
+  - {name: imf_data, type: Dataset, description: "IMF dataset"}
+  - {name: oecd_data, type: Dataset, description: "OECD dataset"}
+  - {name: comtrade_data, type: Dataset, description: "Comtrade dataset"}
+  - {name: patents_data, type: Dataset, description: "Patents dataset"}
+  - {name: country_industry_data, type: Dataset, description: "Country Industry Matrix dataset"}
+  - {name: pestle_scores_data, type: Dataset, description: "PESTLE Scores dataset"}
+  - {name: schema_metadata, type: String, description: "Metadata about fetched schemas"}
+
+implementation:
+  container:
+    image: python:3.9-slim
+    command:
+      - sh
+      - -ec
+      - |
+        apt-get update > /dev/null && apt-get install -y curl > /dev/null
+        pip3 install --quiet requests pandas || pip3 install --quiet requests pandas --user
+        exec "$0" "$@"
+      - python3
+      - -u
+      - -c
+      - |
+        import argparse
+        import os
+        import json
+        import pickle
+        import requests
+        import pandas as pd
+        from typing import Dict, List, Any
+        import time
+        from datetime import datetime
+
+        parser = argparse.ArgumentParser(description="Load PESTLE Datasets")
+        parser.add_argument('--access_token', type=str, required=True)
+        parser.add_argument('--domain', type=str, required=True)
+        parser.add_argument('--schema_ids', type=str, required=True)
+        parser.add_argument('--page_size', type=int, default=10000)
+        
+        # Output paths for each dataset
+        parser.add_argument('--worldbank_data', type=str, required=True)
+        parser.add_argument('--imf_data', type=str, required=True)
+        parser.add_argument('--oecd_data', type=str, required=True)
+        parser.add_argument('--comtrade_data', type=str, required=True)
+        parser.add_argument('--patents_data', type=str, required=True)
+        parser.add_argument('--country_industry_data', type=str, required=True)
+        parser.add_argument('--pestle_scores_data', type=str, required=True)
+        parser.add_argument('--schema_metadata', type=str, required=True)
+        
+        args = parser.parse_args()
+
+        # Read access token
+        with open(args.access_token, 'r') as f:
+            access_token = f.read().strip()
+
+        # Parse schema IDs
+        try:
+            schema_mapping = json.loads(args.schema_ids)
+        except:
+            # Default schema IDs (you can customize these)
+            schema_mapping = {
+                "worldbank": "68c16c9033b961627a6b7cea",
+                "imf": "68c484885fafa83bbffefd22",
+                "oecd": "68c46c315fafa83bbffefd20",
+                "comtrade": "68e66005d0b6dd4b1f848547",
+                "patents": "68e79ed7d0b6dd4b1f84854c",
+                "country_industry": "68b055294e7cc90774f5db7d",
+                "pestle_scores": "69269d55f1dcf736e80891d8"
+            }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {access_token}"
+        }
+
+        payload = {
+            "dbType": "TIDB",
+            "entityId": "",
+            "entityIds": [],
+            "ownedOnly": False,
+            "projections": [],
+            "filter": {},
+            "startTime": 0,
+            "endTime": 0
+        }
+
+        def fetch_schema_data(schema_name: str, schema_id: str) -> Dict[str, Any]:
+            """Fetch data from a specific schema"""
+            print(f" Fetching {schema_name}...")
+            
+            url = f"{args.domain}/pi-entity-instances-service/v2.0/schemas/{schema_id}/instances/list?page=0&size={args.page_size}&showDBaaSReservedKeywords=true"
+            
+            try:
+                response = requests.post(url, headers=headers, json=payload, timeout=120)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    
+                    if isinstance(data, list):
+                        print(f"   Success: {len(data)} records")
+                        
+                        # Convert to DataFrame for analysis
+                        df = pd.DataFrame(data)
+                        
+                        # Basic analysis
+                        analysis = {
+                            "schema_name": schema_name,
+                            "schema_id": schema_id,
+                            "status": "success",
+                            "records": len(data),
+                            "columns": list(df.columns),
+                            "shape": df.shape,
+                            "sample": df.head(3).to_dict(orient='records'),
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        
+                        return {
+                            "data": data,
+                            "df": df,
+                            "analysis": analysis
+                        }
+                    else:
+                        print(f"   Unexpected data format: {type(data)}")
+                        return {
+                            "data": data,
+                            "df": None,
+                            "analysis": {
+                                "schema_name": schema_name,
+                                "schema_id": schema_id,
+                                "status": "unexpected_format",
+                                "data_type": str(type(data)),
+                                "timestamp": datetime.now().isoformat()
+                            }
+                        }
+                        
+                else:
+                    print(f"   Failed: {response.status_code}")
+                    print(f"   Error: {response.text[:200]}")
+                    
+                    return {
+                        "data": None,
+                        "df": None,
+                        "analysis": {
+                            "schema_name": schema_name,
+                            "schema_id": schema_id,
+                            "status": "failed",
+                            "status_code": response.status_code,
+                            "error": response.text[:500],
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    }
+                    
+            except Exception as e:
+                print(f"   Exception: {e}")
+                return {
+                    "data": None,
+                    "df": None,
+                    "analysis": {
+                        "schema_name": schema_name,
+                        "schema_id": schema_id,
+                        "status": "exception",
+                        "error": str(e),
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+
+        # Fetch all datasets
+        all_results = {}
+        metadata = {
+            "fetch_timestamp": datetime.now().isoformat(),
+            "domain": args.domain,
+            "page_size": args.page_size,
+            "schemas": {}
+        }
+
+        for schema_name, schema_id in schema_mapping.items():
+            result = fetch_schema_data(schema_name, schema_id)
+            all_results[schema_name] = result
+            metadata["schemas"][schema_name] = result["analysis"]
+            
+            # Save individual dataset
+            output_var_name = f"{schema_name}_data"
+            output_path = getattr(args, output_var_name)
+            
+            if result["data"] is not None:
+                # Save as pickle
+                os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+                with open(output_path, 'wb') as f:
+                    pickle.dump(result["data"], f)
+                print(f"   Saved to: {output_path}")
+            else:
+                # Create empty file if no data
+                os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
+                with open(output_path, 'wb') as f:
+                    pickle.dump([], f)
+                print(f"   Created empty file: {output_path}")
+
+        # Save metadata
+        os.makedirs(os.path.dirname(args.schema_metadata) or ".", exist_ok=True)
+        with open(args.schema_metadata, 'w') as f:
+            json.dump(metadata, f, indent=2)
+
+        print(f" All datasets fetched and saved")
+        print(f" Metadata saved to: {args.schema_metadata}")
+
+        # Print summary
+        successful = [name for name, result in all_results.items() 
+                     if result["analysis"]["status"] == "success"]
+        
+        print(f" FETCH SUMMARY:")
+        print(f"   Successful: {len(successful)}/{len(schema_mapping)}")
+        print(f"   Failed: {len(schema_mapping) - len(successful)}")
+        
+        for name in successful:
+            records = all_results[name]["analysis"]["records"]
+            print(f"   • {name}: {records:,} records")
+            
+    args:
+      - --access_token
+      - {inputPath: access_token}
+      - --domain
+      - {inputValue: domain}
+      - --schema_ids
+      - {inputValue: schema_ids}
+      - --page_size
+      - {inputValue: page_size}
+      - --worldbank_data
+      - {outputPath: worldbank_data}
+      - --imf_data
+      - {outputPath: imf_data}
+      - --oecd_data
+      - {outputPath: oecd_data}
+      - --comtrade_data
+      - {outputPath: comtrade_data}
+      - --patents_data
+      - {outputPath: patents_data}
+      - --country_industry_data
+      - {outputPath: country_industry_data}
+      - --pestle_scores_data
+      - {outputPath: pestle_scores_data}
+      - --schema_metadata
+      - {outputPath: schema_metadata}
