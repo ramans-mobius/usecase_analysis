@@ -1,4 +1,4 @@
-name: Load PESTLE Datasets (Fixed Domains)
+name: 2 Load PESTLE Datasets (Fixed Domains)
 description: Fetches PESTLE datasets using correct domains for each service
 
 inputs:
@@ -69,9 +69,9 @@ implementation:
         with open(args.access_token, 'r') as f:
             access_token = f.read().strip()
 
-        print(f"Using domains:")
-        print(f"  IAM Domain: {args.iam_domain}")
-        print(f"  API Domain: {args.api_domain}")
+        print("Using domains:")
+        print("  IAM Domain: " + args.iam_domain)
+        print("  API Domain: " + args.api_domain)
 
         # Parse schema IDs
         try:
@@ -89,7 +89,7 @@ implementation:
 
         headers = {
             "Content-Type": "application/json",
-            "Authorization": f"Bearer {access_token}"
+            "Authorization": "Bearer " + access_token
         }
 
         payload = {
@@ -103,12 +103,12 @@ implementation:
             "endTime": 0
         }
 
-        def fetch_schema_data(schema_name: str, schema_id: str) -> dict:
-            print(f"\nFetching {schema_name}...")
-            print(f"  Schema ID: {schema_id}")
+        def fetch_schema_data(schema_name, schema_id):
+            print("\nFetching " + schema_name + "...")
+            print("  Schema ID: " + schema_id)
             
-            url = f"{args.api_domain}/pi-entity-instances-service/v2.0/schemas/{schema_id}/instances/list?page=0&size={args.page_size}&showDBaaSReservedKeywords=true"
-            print(f"  URL: {url}")
+            url = args.api_domain + "/pi-entity-instances-service/v2.0/schemas/" + schema_id + "/instances/list?page=0&size=" + str(args.page_size) + "&showDBaaSReservedKeywords=true"
+            print("  URL: " + url)
             
             try:
                 # ADD verify=False to disable SSL verification
@@ -120,13 +120,13 @@ implementation:
                     verify=False  # ← CRITICAL FIX: Disable SSL verification
                 )
                 
-                print(f"  Status: {response.status_code}")
+                print("  Status: " + str(response.status_code))
                 
                 if response.status_code == 200:
                     data = response.json()
                     
                     if isinstance(data, list):
-                        print(f"   Success: {len(data)} records")
+                        print("   Success: " + str(len(data)) + " records")
                         
                         df = pd.DataFrame(data)
                         
@@ -147,7 +147,7 @@ implementation:
                             "analysis": analysis
                         }
                     else:
-                        print(f"   Unexpected data format: {type(data)}")
+                        print("   Unexpected data format: " + str(type(data)))
                         return {
                             "data": data,
                             "df": None,
@@ -161,8 +161,8 @@ implementation:
                         }
                         
                 else:
-                    print(f"   Failed: {response.status_code}")
-                    print(f"  Error: {response.text[:200]}")
+                    print("   Failed: " + str(response.status_code))
+                    print("  Error: " + response.text[:200])
                     
                     return {
                         "data": None,
@@ -178,7 +178,7 @@ implementation:
                     }
                     
             except Exception as e:
-                print(f"   Exception: {e}")
+                print("   Exception: " + str(e))
                 return {
                     "data": None,
                     "df": None,
@@ -207,39 +207,39 @@ implementation:
             metadata["schemas"][schema_name] = result["analysis"]
             
             # Save individual dataset
-            output_var_name = f"{schema_name}_data"
+            output_var_name = schema_name + "_data"
             output_path = getattr(args, output_var_name)
             
             if result["data"] is not None:
                 os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                 with open(output_path, 'wb') as f:
                     pickle.dump(result["data"], f)
-                print(f"   Saved to: {output_path}")
+                print("   Saved to: " + output_path)
             else:
                 os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                 with open(output_path, 'wb') as f:
                     pickle.dump([], f)
-                print(f"  Created empty file: {output_path}")
+                print("   Created empty file: " + output_path)
 
         # Save metadata
         os.makedirs(os.path.dirname(args.schema_metadata) or ".", exist_ok=True)
         with open(args.schema_metadata, 'w') as f:
             json.dump(metadata, f, indent=2)
 
-        print(f" All datasets processed")
-        print(f" Metadata saved to: {args.schema_metadata}")
+        print(" All datasets processed")
+        print(" Metadata saved to: " + args.schema_metadata)
 
         # Print summary
         successful = [name for name, result in all_results.items() 
                      if result["analysis"]["status"] == "success"]
         
-        print(f" FETCH SUMMARY:")
-        print(f"  Successful: {len(successful)}/{len(schema_mapping)}")
-        print(f"  Failed: {len(schema_mapping) - len(successful)}")
+        print(" FETCH SUMMARY:")
+        print("  Successful: " + str(len(successful)) + "/" + str(len(schema_mapping)))
+        print("  Failed: " + str(len(schema_mapping) - len(successful)))
         
         for name in successful:
             records = all_results[name]["analysis"]["records"]
-            print(f"  • {name}: {records:,} records")
+            print("  • " + name + ": " + str(records) + " records")
             
     args:
       - --access_token
