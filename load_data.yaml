@@ -95,7 +95,7 @@ implementation:
         }
 
         def fetch_schema_data(schema_name: str, schema_id: str) -> Dict[str, Any]:
-            """Fetch data from a specific schema"""
+           
             print(f" Fetching {schema_name}...")
             
             url = f"{args.domain}/pi-entity-instances-service/v2.0/schemas/{schema_id}/instances/list?page=0&size={args.page_size}&showDBaaSReservedKeywords=true"
