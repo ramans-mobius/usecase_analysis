@@ -1,13 +1,11 @@
-name: 3 Load PESTLE Datasets (Fixed Domains)
+name: Load PESTLE Datasets
 description: Fetches PESTLE datasets using correct domains for each service
-
 inputs:
   - {name: access_token, type: string, description: "Bearer access token from IAM login"}
-  - {name: iam_domain, type: string, description: "Domain for IAM service (e.g., https://igs.gov-cloud.ai)"}
-  - {name: api_domain, type: string, description: "Domain for data API (e.g., https://ig.aidtaas.com)"}
+  - {name: iam_domain, type: string, description: "Domain for IAM service"}
+  - {name: api_domain, type: string, description: "Domain for data API"}
   - {name: schema_ids, type: String, description: "JSON string with schema IDs mapping"}
   - {name: page_size, type: Integer, default: "10000", description: "Number of records per page"}
-
 outputs:
   - {name: worldbank_data, type: Dataset}
   - {name: imf_data, type: Dataset}
@@ -16,8 +14,8 @@ outputs:
   - {name: patents_data, type: Dataset}
   - {name: country_industry_data, type: Dataset}
   - {name: pestle_scores_data, type: Dataset}
+  - {name: agriculture_forestry_data, type: Dataset}
   - {name: schema_metadata, type: String}
-
 implementation:
   container:
     image: python:3.9-slim
@@ -42,7 +40,6 @@ implementation:
         import warnings
         from datetime import datetime
         
-        # Disable SSL warnings for testing
         warnings.filterwarnings('ignore')
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         
@@ -53,7 +50,6 @@ implementation:
         parser.add_argument('--schema_ids', type=str, required=True)
         parser.add_argument('--page_size', type=int, default=10000)
         
-        # Output paths
         parser.add_argument('--worldbank_data', type=str, required=True)
         parser.add_argument('--imf_data', type=str, required=True)
         parser.add_argument('--oecd_data', type=str, required=True)
@@ -61,19 +57,19 @@ implementation:
         parser.add_argument('--patents_data', type=str, required=True)
         parser.add_argument('--country_industry_data', type=str, required=True)
         parser.add_argument('--pestle_scores_data', type=str, required=True)
+        parser.add_argument('--agriculture_forestry_data', type=str, required=True)
         parser.add_argument('--schema_metadata', type=str, required=True)
         
         args = parser.parse_args()
 
-        # Read access token
         with open(args.access_token, 'r') as f:
             access_token = f.read().strip()
 
+        print("LOADING PESTLE DATASETS")
         print("Using domains:")
-        print("  IAM Domain: " + args.iam_domain)
-        print("  API Domain: " + args.api_domain)
+        print("IAM Domain: " + args.iam_domain)
+        print("API Domain: " + args.api_domain)
 
-        # Parse schema IDs
         try:
             schema_mapping = json.loads(args.schema_ids)
         except:
@@ -84,7 +80,8 @@ implementation:
                 "comtrade": "68e66005d0b6dd4b1f848547",
                 "patents": "68e79ed7d0b6dd4b1f84854c",
                 "country_industry": "68b055294e7cc90774f5db7d",
-                "pestle_scores": "69269d55f1dcf736e80891d8"
+                "pestle_scores": "69269d55f1dcf736e80891d8",
+                "agriculture_forestry": "68b54a72449b0c059a42adbc"
             }
 
         headers = {
@@ -104,29 +101,28 @@ implementation:
         }
 
         def fetch_schema_data(schema_name, schema_id):
-            print("  Fetching " + schema_name + "...")
-            print("  Schema ID: " + schema_id)
+            print("Fetching " + schema_name + "...")
+            print("Schema ID: " + schema_id)
             
             url = args.api_domain + "/pi-entity-instances-service/v2.0/schemas/" + schema_id + "/instances/list?page=0&size=" + str(args.page_size) + "&showDBaaSReservedKeywords=true"
-            print("  URL: " + url)
+            print("URL: " + url)
             
             try:
-                # ADD verify=False to disable SSL verification
                 response = requests.post(
                     url, 
                     headers=headers, 
                     json=payload, 
                     timeout=120,
-                    verify=False  # ← CRITICAL FIX: Disable SSL verification
+                    verify=False
                 )
                 
-                print("  Status: " + str(response.status_code))
+                print("Status: " + str(response.status_code))
                 
                 if response.status_code == 200:
                     data = response.json()
                     
                     if isinstance(data, list):
-                        print("   Success: " + str(len(data)) + " records")
+                        print("Success: " + str(len(data)) + " records")
                         
                         df = pd.DataFrame(data)
                         
@@ -147,7 +143,7 @@ implementation:
                             "analysis": analysis
                         }
                     else:
-                        print("   Unexpected data format: " + str(type(data)))
+                        print("Unexpected data format: " + str(type(data)))
                         return {
                             "data": data,
                             "df": None,
@@ -161,8 +157,8 @@ implementation:
                         }
                         
                 else:
-                    print("   Failed: " + str(response.status_code))
-                    print("  Error: " + response.text[:200])
+                    print("Failed: " + str(response.status_code))
+                    print("Error: " + response.text[:200])
                     
                     return {
                         "data": None,
@@ -178,7 +174,7 @@ implementation:
                     }
                     
             except Exception as e:
-                print("   Exception: " + str(e))
+                print("Exception: " + str(e))
                 return {
                     "data": None,
                     "df": None,
@@ -191,7 +187,6 @@ implementation:
                     }
                 }
 
-        # Fetch all datasets
         all_results = {}
         metadata = {
             "fetch_timestamp": datetime.now().isoformat(),
@@ -206,7 +201,6 @@ implementation:
             all_results[schema_name] = result
             metadata["schemas"][schema_name] = result["analysis"]
             
-            # Save individual dataset
             output_var_name = schema_name + "_data"
             output_path = getattr(args, output_var_name)
             
@@ -214,32 +208,30 @@ implementation:
                 os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                 with open(output_path, 'wb') as f:
                     pickle.dump(result["data"], f)
-                print("   Saved to: " + output_path)
+                print("Saved to: " + output_path)
             else:
                 os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
                 with open(output_path, 'wb') as f:
                     pickle.dump([], f)
-                print("   Created empty file: " + output_path)
+                print("Created empty file: " + output_path)
 
-        # Save metadata
         os.makedirs(os.path.dirname(args.schema_metadata) or ".", exist_ok=True)
         with open(args.schema_metadata, 'w') as f:
             json.dump(metadata, f, indent=2)
 
-        print(" All datasets processed")
-        print(" Metadata saved to: " + args.schema_metadata)
+        print("All datasets processed")
+        print("Metadata saved to: " + args.schema_metadata)
 
-        # Print summary
         successful = [name for name, result in all_results.items() 
                      if result["analysis"]["status"] == "success"]
         
-        print(" FETCH SUMMARY:")
-        print("  Successful: " + str(len(successful)) + "/" + str(len(schema_mapping)))
-        print("  Failed: " + str(len(schema_mapping) - len(successful)))
+        print("FETCH SUMMARY:")
+        print("Successful: " + str(len(successful)) + "/" + str(len(schema_mapping)))
+        print("Failed: " + str(len(schema_mapping) - len(successful)))
         
         for name in successful:
             records = all_results[name]["analysis"]["records"]
-            print("  • " + name + ": " + str(records) + " records")
+            print(name + ": " + str(records) + " records")
             
     args:
       - --access_token
@@ -266,5 +258,7 @@ implementation:
       - {outputPath: country_industry_data}
       - --pestle_scores_data
       - {outputPath: pestle_scores_data}
+      - --agriculture_forestry_data
+      - {outputPath: agriculture_forestry_data}
       - --schema_metadata
       - {outputPath: schema_metadata}
